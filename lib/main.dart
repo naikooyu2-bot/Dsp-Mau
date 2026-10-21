@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 
 void main() {
   runApp(const CarrozzeriaDspApp());
@@ -57,40 +57,30 @@ class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScree
   }
 
   Future<void> _pickAndPlayMusic() async {
-    var status = await Permission.audio.request();
-    if (!status.isGranted) {
-      status = await Permission.storage.request();
-    }
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+      );
 
-    if (status.isGranted) {
-      try {
-        final directory = Directory('/storage/emulated/0/Music');
-        if (await directory.exists()) {
-          final files = directory.listSync().where((entity) => entity.path.endsWith('.mp3') || entity.path.endsWith('.flac')).toList();
-          
-          if (files.isNotEmpty) {
-            final filePath = files.first.path;
-            await _audioPlayer.setFilePath(filePath);
-            await _audioPlayer.play();
-            setState(() {
-              _currentTrackName = files.first.uri.pathSegments.last;
-              _audioInfo = filePath.endsWith('.flac') ? 'FLAC 96kHz/24bit' : 'MP3 LOCAL AUDIO';
-            });
-            return;
-          }
-        }
-        
+      if (result != null && result.files.single.path != null) {
+        final filePath = result.files.single.path!;
+        final fileName = result.files.single.name;
+
+        await _audioPlayer.setFilePath(filePath);
+        await _audioPlayer.play();
+
         setState(() {
-          _currentTrackName = 'NO MUSIC FOUND IN /Music';
+          _currentTrackName = fileName;
+          _audioInfo = fileName.toLowerCase().endsWith('.flac') ? 'FLAC 96kHz/24bit' : 'MP3 LOCAL AUDIO';
         });
-      } catch (e) {
+      } else {
         setState(() {
-          _currentTrackName = 'ERROR LOADING FILE';
+          _currentTrackName = 'SELECTION CANCELLED';
         });
       }
-    } else {
+    } catch (e) {
       setState(() {
-        _currentTrackName = 'PERMISSION DENIED';
+        _currentTrackName = 'ERROR LOADING FILE';
       });
     }
   }
@@ -229,7 +219,7 @@ class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScree
               ),
               onPressed: _pickAndPlayMusic,
               icon: const Icon(Icons.folder_open),
-              label: const Text('LOAD LOCAL MUSIC FOLDER', style: TextStyle(fontFamily: 'monospace')),
+              label: const Text('SELECT AUDIO FILE', style: TextStyle(fontFamily: 'monospace')),
             ),
             const SizedBox(height: 20),
             Row(
