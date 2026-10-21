@@ -23,7 +23,7 @@ class CarrozzeriaDspApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Carrozzeria DSP Player',
+      title: 'Carrozzeria DEQ-P999',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
@@ -52,10 +52,9 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   bool _isPlaying = false;
   
   String _activeDspPreset = 'DSP: STADIUM';
-  String _activeEqMode = 'EQ > ROCK';
+  String _activeEqMode = 'EQ: ROCK';
 
   static const platform = MethodChannel('com.maudsp.player/audio_fx');
-
   late AnimationController _animController;
 
   @override
@@ -65,7 +64,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 400),
     )..repeat();
 
     _audioPlayer.playerStateStream.listen((state) {
@@ -110,9 +109,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           }
         });
       }
-    } catch (e) {
-      // Handle error
-    }
+    } catch (_) {}
   }
 
   Future<void> _playTrack(int index) async {
@@ -122,38 +119,42 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       final track = _playlist[index];
       await _audioPlayer.setFilePath(track.path);
       
-      // Apply active DSP preset configuration upon track loading
-      await _applyDspEffect(_activeDspPreset);
+      // Link audio session to native Android audio effects
+      final int? sessionId = await _audioPlayer.androidAudioSessionId;
+      if (sessionId != null) {
+        await platform.invokeMethod('initEffects', {'sessionId': sessionId});
+        await _applyNativeEq(_activeEqMode);
+        await _applyNativeDsp(_activeDspPreset);
+      }
 
       await _audioPlayer.play();
       setState(() {});
-    } catch (e) {
-      // Handle error
-    }
+    } catch (_) {}
   }
 
-  Future<void> _applyDspEffect(String preset) async {
-    setState(() {
-      _activeDspPreset = preset;
-    });
+  Future<void> _applyNativeEq(String mode) async {
+    setState(() => _activeEqMode = mode);
+    int presetIndex = 0;
+    if (mode == 'EQ: ROCK') presetIndex = 1;
+    else if (mode == 'EQ: POP') presetIndex = 2;
+    else if (mode == 'EQ: JAZZ') presetIndex = 3;
+    else if (mode == 'EQ: VOCAL') presetIndex = 4;
 
     try {
-      final int? sessionId = await _audioPlayer.androidAudioSessionId;
-      if (sessionId != null) {
-        // Send reverb preset configuration to native Android audio effects handler
-        int presetMode = 0;
-        if (preset == 'DSP: STADIUM') presetMode = 1; // Large stadium acoustics
-        else if (preset == 'DSP: HALL') presetMode = 2; // Concert hall echo
-        else if (preset == 'DSP: LARGE ROOM') presetMode = 3; // Room reverberation
+      await platform.invokeMethod('setEqPreset', {'preset': presetIndex});
+    } catch (_) {}
+  }
 
-        await platform.invokeMethod('setReverbPreset', {
-          'sessionId': sessionId,
-          'preset': presetMode,
-        });
-      }
-    } catch (_) {
-      // Fallback gracefully if hardware audio effects engine requires specific permission/state
-    }
+  Future<void> _applyNativeDsp(String preset) async {
+    setState(() => _activeDspPreset = preset);
+    int reverbCode = 2; // Stadium default
+    if (preset == 'DSP: HALL') reverbCode = 1;
+    else if (preset == 'DSP: STADIUM') reverbCode = 2;
+    else if (preset == 'DSP: LARGE ROOM') reverbCode = 3;
+
+    try {
+      await platform.invokeMethod('setDspReverb', {'preset': reverbCode});
+    } catch (_) {}
   }
 
   void _togglePlay() async {
@@ -184,75 +185,55 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     _playTrack(prev);
   }
 
-  Future<void> _openSystemEqualizer() async {
-    try {
-      final int? sessionId = await _audioPlayer.androidAudioSessionId;
-      await platform.invokeMethod('openAudioEffects', {'sessionId': sessionId ?? 0});
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Opening device sound effects panel...')),
-      );
-    }
-  }
-
-  void _showSettingsDialog() {
+  // Dedicated EQ Selector Dialog
+  void _showEqDialog() {
+    final eqOptions = ['EQ: ROCK', 'EQ: POP', 'EQ: JAZZ', 'EQ: VOCAL'];
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF050B14),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
           side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
         ),
-        title: const Text(
-          'DSP & EQUALIZER SETTINGS',
-          style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 16),
-        ),
+        title: const Text('CARROZZERIA EQ MODES', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 15)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text('Open Hardware Equalizer', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
-              subtitle: const Text('Configure Huawei Sound Effects', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 11)),
-              trailing: const Icon(Icons.tune, color: Color(0xFF00E5FF)),
-              onTap: () {
-                Navigator.pop(context);
-                _openSystemEqualizer();
-              },
-            ),
-            ListTile(
-              title: const Text('Reverb Preset', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
-              subtitle: Text(_activeDspPreset, style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace')),
-              trailing: const Icon(Icons.surround_sound, color: Color(0xFF00E5FF)),
-              onTap: () {
-                if (_activeDspPreset == 'DSP: STADIUM') {
-                  _applyDspEffect('DSP: HALL');
-                } else if (_activeDspPreset == 'DSP: HALL') {
-                  _applyDspEffect('DSP: LARGE ROOM');
-                } else {
-                  _applyDspEffect('DSP: STADIUM');
-                }
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              title: const Text('Equalizer Mode', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
-              subtitle: Text(_activeEqMode, style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace')),
-              trailing: const Icon(Icons.equalizer, color: Color(0xFF00E5FF)),
-              onTap: () {
-                setState(() {
-                  if (_activeEqMode == 'EQ > ROCK') {
-                    _activeEqMode = 'EQ > BASS BOOST';
-                  } else if (_activeEqMode == 'EQ > BASS BOOST') {
-                    _activeEqMode = 'EQ > VOCAL CLEAR';
-                  } else {
-                    _activeEqMode = 'EQ > ROCK';
-                  }
-                });
-                Navigator.pop(context);
-              },
-            ),
-          ],
+          children: eqOptions.map((mode) => ListTile(
+            title: Text(mode, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
+            trailing: _activeEqMode == mode ? const Icon(Icons.check, color: Color(0xFF00E5FF)) : null,
+            onTap: () {
+              _applyNativeEq(mode);
+              Navigator.pop(context);
+            },
+          )).toList(),
+        ),
+      ),
+    );
+  }
+
+  // Dedicated DSP Acoustic Selector Dialog
+  void _showDspDialog() {
+    final dspOptions = ['DSP: HALL', 'DSP: STADIUM', 'DSP: LARGE ROOM'];
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF050B14),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
+        ),
+        title: const Text('DEQ-P999 ACOUSTIC DSP', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 15)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: dspOptions.map((preset) => ListTile(
+            title: Text(preset, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
+            trailing: _activeDspPreset == preset ? const Icon(Icons.check, color: Color(0xFF00E5FF)) : null,
+            onTap: () {
+              _applyNativeDsp(preset);
+              Navigator.pop(context);
+            },
+          )).toList(),
         ),
       ),
     );
@@ -260,31 +241,17 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
-    final screens = [
-      _buildPlayerTab(),
-      _buildPlaylistTab(),
-    ];
+    final screens = [_buildPlayerTab(), _buildPlaylistTab()];
 
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         title: Text(
-          _currentIndex == 0 ? 'CARROZZERIA DSP' : 'LIBRARY & PLAYLIST',
-          style: const TextStyle(
-            color: Color(0xFF00E5FF),
-            fontFamily: 'monospace',
-            fontWeight: FontWeight.bold,
-            letterSpacing: 2.0,
-          ),
+          _currentIndex == 0 ? 'PIONEER DEQ-P999' : 'LIBRARY & PLAYLIST',
+          style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold, letterSpacing: 2.0),
         ),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_suggest_rounded, color: Color(0xFF00E5FF)),
-            onPressed: _showSettingsDialog,
-          ),
-        ],
       ),
       body: screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
@@ -294,53 +261,33 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.play_circle_fill_rounded),
-            label: 'Player',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.library_music_rounded),
-            label: 'Library',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.play_circle_fill_rounded), label: 'Player'),
+          BottomNavigationBarItem(icon: Icon(Icons.library_music_rounded), label: 'Library'),
         ],
       ),
     );
   }
 
   Widget _buildPlayerTab() {
-    final currentTrack = (_currentTrackIndex >= 0 && _currentTrackIndex < _playlist.length)
-        ? _playlist[_currentTrackIndex]
-        : null;
+    final currentTrack = (_currentTrackIndex >= 0 && _currentTrackIndex < _playlist.length) ? _playlist[_currentTrackIndex] : null;
 
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
+          // OEL Matrix Display Box with Professional Reactive Visualizer
           Container(
             height: 220,
             width: double.infinity,
             decoration: BoxDecoration(
-              color: const Color(0xFF050B14),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: const Color(0xFF00E5FF).withOpacity(0.4),
-                width: 2,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF00E5FF).withOpacity(0.25),
-                  blurRadius: 15,
-                  spreadRadius: 1,
-                ),
-              ],
+              color: const Color(0xFF03070E),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 2),
+              boxShadow: [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.3), blurRadius: 12, spreadRadius: 1)],
             ),
             child: Stack(
               children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: ScanlinePainter(),
-                  ),
-                ),
+                Positioned.fill(child: CustomPaint(painter: ScanlinePainter())),
                 Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Column(
@@ -350,46 +297,29 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            _activeEqMode,
-                            style: const TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
-                          Text(
-                            currentTrack?.quality ?? 'FLAC 96kHz/24bit',
-                            style: const TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
+                          Text(_activeEqMode, style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace')),
+                          Text(currentTrack?.quality ?? 'FLAC 96kHz/24bit', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace')),
                         ],
                       ),
+                      // Professional Reactive Waveform Visualizer
                       AnimatedBuilder(
                         animation: _animController,
                         builder: (context, child) {
                           return Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             crossAxisAlignment: CrossAxisAlignment.end,
-                            children: List.generate(16, (index) {
+                            children: List.generate(20, (index) {
                               double wave = _isPlaying
-                                  ? math.sin((_animController.value * 2 * math.pi) + (index * 0.5)) * 45 + 65
-                                  : 15.0;
+                                  ? (math.sin((_animController.value * 2 * math.pi) + (index * 0.4)) * 50 +
+                                      math.cos((_animController.value * 3 * math.pi) + (index * 0.3)) * 30 + 70)
+                                  : 12.0;
                               return Container(
-                                width: 8,
-                                height: wave.abs(),
+                                width: 6,
+                                height: wave.clamp(10.0, 130.0),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF00E5FF),
-                                  borderRadius: BorderRadius.circular(2),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: const Color(0xFF00E5FF),
-                                      blurRadius: 6,
-                                    ),
-                                  ],
+                                  borderRadius: BorderRadius.circular(1),
+                                  boxShadow: [BoxShadow(color: const Color(0xFF00E5FF), blurRadius: 4)],
                                 ),
                               );
                             }),
@@ -399,23 +329,11 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            _activeDspPreset,
-                            style: const TextStyle(
-                              color: Colors.grey,
-                              fontSize: 10,
-                              fontFamily: 'monospace',
-                            ),
-                          ),
+                          Text(_activeDspPreset, style: const TextStyle(color: Colors.grey, fontSize: 10, fontFamily: 'monospace')),
                           const SizedBox(height: 2),
                           Text(
-                            '>> ${currentTrack?.name ?? 'NO TRACK LOADED'}',
-                            style: const TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              fontFamily: 'monospace',
-                            ),
+                            '>> ${currentTrack?.name ?? 'SELECT LOCAL TRACK...'}',
+                            style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ],
@@ -425,6 +343,37 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 16),
+          // Dedicated Standalone EQ and DSP Buttons
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF050B14),
+                    foregroundColor: const Color(0xFF00E5FF),
+                    side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
+                  ),
+                  onPressed: _showEqDialog,
+                  icon: const Icon(Icons.equalizer, size: 18),
+                  label: const Text('EQ SETTINGS', style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF050B14),
+                    foregroundColor: const Color(0xFF00E5FF),
+                    side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
+                  ),
+                  onPressed: _showDspDialog,
+                  icon: const Icon(Icons.surround_sound, size: 18),
+                  label: const Text('DSP REVERB', style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                ),
+              ),
+            ],
           ),
           const Spacer(),
           ElevatedButton.icon(
@@ -437,25 +386,16 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             icon: const Icon(Icons.library_add_rounded),
             label: const Text('IMPORT MUSIC FILES', style: TextStyle(fontFamily: 'monospace')),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 15),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              IconButton(
-                icon: const Icon(Icons.fast_rewind_rounded, size: 36),
-                color: const Color(0xFF00E5FF),
-                onPressed: _prevTrack,
-              ),
+              IconButton(icon: const Icon(Icons.fast_rewind_rounded, size: 36), color: const Color(0xFF00E5FF), onPressed: _prevTrack),
               Container(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(color: const Color(0xFF00E5FF), width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF00E5FF).withOpacity(0.3),
-                      blurRadius: 10,
-                    ),
-                  ],
+                  boxShadow: [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.3), blurRadius: 10)],
                 ),
                 child: IconButton(
                   icon: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 44),
@@ -463,14 +403,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                   onPressed: _togglePlay,
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.fast_forward_rounded, size: 36),
-                color: const Color(0xFF00E5FF),
-                onPressed: _nextTrack,
-              ),
+              IconButton(icon: const Icon(Icons.fast_forward_rounded, size: 36), color: const Color(0xFF00E5FF), onPressed: _nextTrack),
             ],
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 30),
         ],
       ),
     );
@@ -484,10 +420,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           children: [
             const Icon(Icons.music_off_rounded, size: 64, color: Color(0xFF00E5FF)),
             const SizedBox(height: 16),
-            const Text(
-              'NO SONGS IN LIBRARY',
-              style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold),
-            ),
+            const Text('NO SONGS IN LIBRARY', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
@@ -511,30 +444,13 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         final isSelected = index == _currentTrackIndex;
 
         return ListTile(
-          leading: Icon(
-            isSelected ? Icons.graphic_eq_rounded : Icons.music_note_rounded,
-            color: const Color(0xFF00E5FF),
-          ),
+          leading: Icon(isSelected ? Icons.graphic_eq_rounded : Icons.music_note_rounded, color: const Color(0xFF00E5FF)),
           title: Text(
             track.name,
-            style: TextStyle(
-              color: isSelected ? const Color(0xFF00E5FF) : Colors.white,
-              fontFamily: 'monospace',
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            ),
+            style: TextStyle(color: isSelected ? const Color(0xFF00E5FF) : Colors.white, fontFamily: 'monospace', fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
             overflow: TextOverflow.ellipsis,
           ),
-          subtitle: Text(
-            track.quality,
-            style: const TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 11),
-          ),
-          trailing: isSelected && _isPlaying
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(color: Color(0xFF00E5FF), strokeWidth: 2),
-                )
-              : null,
+          subtitle: Text(track.quality, style: const TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 11)),
           onTap: () => _playTrack(index),
         );
       },
@@ -543,6 +459,9 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
 }
 
 class ScanlinePainter extends CustomPainter {
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
@@ -553,7 +472,4 @@ class ScanlinePainter extends CustomPainter {
       canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
     }
   }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
