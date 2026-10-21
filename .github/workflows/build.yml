@@ -21,9 +21,79 @@ jobs:
           flutter-version: '3.19.0'
           cache: true
 
-      - name: Create Android Local Wrapper
+      - name: Create Android Local Wrapper & MainActivity
         run: |
           flutter create . --org com.maudsp.player --project-name carrozzeria_dsp_player --platforms=android
+          
+          # Automatically write the native audio effects Kotlin bridge
+          mkdir -p android/app/src/main/kotlin/com/maudsp/player
+          cat << 'EOF' > android/app/src/main/kotlin/com/maudsp/player/MainActivity.kt
+          package com.maudsp.player
+
+          import android.media.audiofx.Equalizer
+          import android.media.audiofx.PresetReverb
+          import android.media.audiofx.Visualizer
+          import androidx.annotation.NonNull
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity: FlutterActivity() {
+              private val CHANNEL = "com.maudsp.player/audio_fx"
+              private var equalizer: Equalizer? = null
+              private var reverb: PresetReverb? = null
+              private var visualizer: Visualizer? = null
+
+              override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+                      val sessionId = call.argument<Int>("sessionId") ?: 0
+
+                      when (call.method) {
+                          "initEffects" -> {
+                              try {
+                                  equalizer?.release()
+                                  reverb?.release()
+
+                                  equalizer = Equalizer(0, sessionId).apply { enabled = true }
+                                  reverb = PresetReverb(0, sessionId).apply { enabled = true }
+                                  result.success(true)
+                              } catch (e: Exception) {
+                                  result.success(false)
+                              }
+                          }
+                          "setEqPreset" -> {
+                              val preset = call.argument<Int>("preset") ?: 0
+                              try {
+                                  equalizer?.usePreset(preset.toShort())
+                                  result.success(true)
+                              } catch (e: Exception) {
+                                  result.success(false)
+                              }
+                          }
+                          "setDspReverb" -> {
+                              val preset = call.argument<Int>("preset") ?: 0
+                              try {
+                                  reverb?.preset = preset.toShort()
+                                  result.success(true)
+                              } catch (e: Exception) {
+                                  result.success(false)
+                              }
+                          }
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+
+              override fun onDestroy() {
+                  super.onDestroy()
+                  equalizer?.release()
+                  reverb?.release()
+                  visualizer?.release()
+              }
+          }
+          EOF
 
       - name: Restore Custom Pubspec
         run: |
