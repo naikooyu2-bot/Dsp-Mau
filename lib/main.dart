@@ -123,8 +123,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       final int? sessionId = await _audioPlayer.androidAudioSessionId;
       if (sessionId != null) {
         await platform.invokeMethod('initEffects', {'sessionId': sessionId});
-        await _applyNativeEq(_activeEqMode);
-        await _applyNativeDsp(_activeDspPreset);
+        await _applyNativeEq(_activeEqMode, showSnackbar: false);
+        await _applyNativeDsp(_activeDspPreset, showSnackbar: false);
       }
 
       await _audioPlayer.play();
@@ -132,7 +132,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     } catch (_) {}
   }
 
-  Future<void> _applyNativeEq(String mode) async {
+  Future<void> _applyNativeEq(String mode, {bool showSnackbar = true}) async {
     setState(() => _activeEqMode = mode);
     int presetIndex = 0;
     if (mode == 'EQ: ROCK') presetIndex = 1;
@@ -141,11 +141,23 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     else if (mode == 'EQ: VOCAL') presetIndex = 4;
 
     try {
-      await platform.invokeMethod('setEqPreset', {'preset': presetIndex});
+      final bool? success = await platform.invokeMethod('setEqPreset', {'preset': presetIndex});
+      if (showSnackbar && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              success == true ? 'Applied $mode via DEQ-P999' : 'EQ applied in simulation mode',
+              style: const TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF)),
+            ),
+            backgroundColor: const Color(0xFF050B14),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
     } catch (_) {}
   }
 
-  Future<void> _applyNativeDsp(String preset) async {
+  Future<void> _applyNativeDsp(String preset, {bool showSnackbar = true}) async {
     setState(() => _activeDspPreset = preset);
     int reverbCode = 2; // Stadium default
     if (preset == 'DSP: HALL') reverbCode = 1;
@@ -153,7 +165,19 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     else if (preset == 'DSP: LARGE ROOM') reverbCode = 3;
 
     try {
-      await platform.invokeMethod('setDspReverb', {'preset': reverbCode});
+      final bool? success = await platform.invokeMethod('setDspReverb', {'preset': reverbCode});
+      if (showSnackbar && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              success == true ? 'Applied $preset Spatial Acoustic' : 'DSP reverb applied',
+              style: const TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF)),
+            ),
+            backgroundColor: const Color(0xFF050B14),
+            duration: const Duration(seconds: 1),
+          ),
+        );
+      }
     } catch (_) {}
   }
 
@@ -275,7 +299,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       padding: const EdgeInsets.all(16.0),
       child: Column(
         children: [
-          // OEL Matrix Display Box with Professional Reactive Visualizer
           Container(
             height: 220,
             width: double.infinity,
@@ -301,7 +324,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                           Text(currentTrack?.quality ?? 'FLAC 96kHz/24bit', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace')),
                         ],
                       ),
-                      // Professional Reactive Waveform Visualizer
                       AnimatedBuilder(
                         animation: _animController,
                         builder: (context, child) {
@@ -345,7 +367,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ),
           ),
           const SizedBox(height: 16),
-          // Dedicated Standalone EQ and DSP Buttons
           Row(
             children: [
               Expanded(
@@ -424,7 +445,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF050B14),
+                backgroundColor: const CorporationColors.background ?? Color(0xFF050B14),
                 foregroundColor: const Color(0xFF00E5FF),
                 side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
               ),
