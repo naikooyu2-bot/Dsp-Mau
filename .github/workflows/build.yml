@@ -1,3 +1,4 @@
+
 name: Build Android APK
 
 on: [push]
@@ -20,6 +21,10 @@ jobs:
         with:
           flutter-version: '3.19.0'
           cache: true
+
+      - name: Create Android Local Wrapper
+        run: |
+          flutter create . --org com.maudsp.player --project-name carrozzeria_dsp_player --platforms=android
 
       - name: Install dependencies
         run: flutter pub get
