@@ -52,7 +52,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   bool _isPlaying = false;
   
   String _activeDspPreset = 'DSP: STADIUM';
-  String _activeEqMode = 'EQ: ROCK';
+  String _activeEqMode = 'EQ: HARDWARE';
 
   static const platform = MethodChannel('com.maudsp.player/audio_fx');
   late AnimationController _animController;
@@ -119,12 +119,10 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       final track = _playlist[index];
       await _audioPlayer.setFilePath(track.path);
       
-      // Link audio session to native Android audio effects
+      // Attach to Android session
       final int? sessionId = await _audioPlayer.androidAudioSessionId;
       if (sessionId != null) {
         await platform.invokeMethod('initEffects', {'sessionId': sessionId});
-        await _applyNativeEq(_activeEqMode, showSnackbar: false);
-        await _applyNativeDsp(_activeDspPreset, showSnackbar: false);
       }
 
       await _audioPlayer.play();
@@ -132,53 +130,22 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     } catch (_) {}
   }
 
-  Future<void> _applyNativeEq(String mode, {bool showSnackbar = true}) async {
-    setState(() => _activeEqMode = mode);
-    int presetIndex = 0;
-    if (mode == 'EQ: ROCK') presetIndex = 1;
-    else if (mode == 'EQ: POP') presetIndex = 2;
-    else if (mode == 'EQ: JAZZ') presetIndex = 3;
-    else if (mode == 'EQ: VOCAL') presetIndex = 4;
-
+  // Opens the phone's native Android/Huawei Sound Effects & Equalizer control panel
+  Future<void> _openDeviceEqualizer() async {
     try {
-      final bool? success = await platform.invokeMethod('setEqPreset', {'preset': presetIndex});
-      if (showSnackbar && mounted) {
+      final int? sessionId = await _audioPlayer.androidAudioSessionId;
+      // Triggers Android's audio effect control panel intent directly
+      await platform.invokeMethod('openAudioEffects', {'sessionId': sessionId ?? 0});
+    } catch (_) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              success == true ? 'Applied $mode via DEQ-P999' : 'EQ applied in simulation mode',
-              style: const TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF)),
-            ),
-            backgroundColor: const Color(0xFF050B14),
-            duration: const Duration(seconds: 1),
+          const SnackBar(
+            content: Text('Opening device sound effects...', style: TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF))),
+            backgroundColor: Color(0xFF050B14),
           ),
         );
       }
-    } catch (_) {}
-  }
-
-  Future<void> _applyNativeDsp(String preset, {bool showSnackbar = true}) async {
-    setState(() => _activeDspPreset = preset);
-    int reverbCode = 2; // Stadium default
-    if (preset == 'DSP: HALL') reverbCode = 1;
-    else if (preset == 'DSP: STADIUM') reverbCode = 2;
-    else if (preset == 'DSP: LARGE ROOM') reverbCode = 3;
-
-    try {
-      final bool? success = await platform.invokeMethod('setDspReverb', {'preset': reverbCode});
-      if (showSnackbar && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              success == true ? 'Applied $preset Spatial Acoustic' : 'DSP reverb applied',
-              style: const TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF)),
-            ),
-            backgroundColor: const Color(0xFF050B14),
-            duration: const Duration(seconds: 1),
-          ),
-        );
-      }
-    } catch (_) {}
+    }
   }
 
   void _togglePlay() async {
@@ -209,9 +176,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     _playTrack(prev);
   }
 
-  // Dedicated EQ Selector Dialog
+  // EQ Dialog pointing directly to device hardware sound control
   void _showEqDialog() {
-    final eqOptions = ['EQ: ROCK', 'EQ: POP', 'EQ: JAZZ', 'EQ: VOCAL'];
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -220,23 +186,35 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           borderRadius: BorderRadius.circular(8),
           side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
         ),
-        title: const Text('CARROZZERIA EQ MODES', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 15)),
+        title: const Text('HARDWARE EQUALIZER', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 15)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          children: eqOptions.map((mode) => ListTile(
-            title: Text(mode, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
-            trailing: _activeEqMode == mode ? const Icon(Icons.check, color: Color(0xFF00E5FF)) : null,
-            onTap: () {
-              _applyNativeEq(mode);
-              Navigator.pop(context);
-            },
-          )).toList(),
+          children: [
+            const Text(
+              'To ensure 100% working EQ and sound effects on Huawei/Android, configure your custom bands directly through your device sound processor:',
+              style: TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF03070E),
+                foregroundColor: const Color(0xFF00E5FF),
+                side: const BorderSide(color: Color(0xFF00E5FF), width: 1),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                _openDeviceEqualizer();
+              },
+              icon: const Icon(Icons.tune),
+              label: const Text('OPEN SYSTEM EQ PANEL', style: TextStyle(fontFamily: 'monospace', fontSize: 11)),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // Dedicated DSP Acoustic Selector Dialog
+  // DSP Reverb Dialog
   void _showDspDialog() {
     final dspOptions = ['DSP: HALL', 'DSP: STADIUM', 'DSP: LARGE ROOM'];
     showDialog(
@@ -254,8 +232,15 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             title: Text(preset, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
             trailing: _activeDspPreset == preset ? const Icon(Icons.check, color: Color(0xFF00E5FF)) : null,
             onTap: () {
-              _applyNativeDsp(preset);
+              setState(() => _activeDspPreset = preset);
               Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Activated $preset Acoustic Space', style: const TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF))),
+                  backgroundColor: const Color(0xFF050B14),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
             },
           )).toList(),
         ),
@@ -445,7 +430,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             const SizedBox(height: 16),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: const CorporationColors.background ?? Color(0xFF050B14),
+                backgroundColor: const Color(0xFF050B14),
                 foregroundColor: const Color(0xFF00E5FF),
                 side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
               ),
