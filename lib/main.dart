@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 
 void main() {
@@ -58,7 +57,6 @@ class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScree
   }
 
   Future<void> _pickAndPlayMusic() async {
-    // Request storage permission
     var status = await Permission.audio.request();
     if (!status.isGranted) {
       status = await Permission.storage.request();
@@ -66,8 +64,6 @@ class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScree
 
     if (status.isGranted) {
       try {
-        // Pointing to standard local phone storage music directories or demo files
-        // For broad compatibility, let's look in common phone music paths or use file picker behavior
         final directory = Directory('/storage/emulated/0/Music');
         if (await directory.exists()) {
           final files = directory.listSync().where((entity) => entity.path.endsWith('.mp3') || entity.path.endsWith('.flac')).toList();
@@ -84,9 +80,8 @@ class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScree
           }
         }
         
-        // Fallback: If no files found in /Music, let user know via track text
         setState(() {
-          _currentTrackName = 'NO MUSIC FOUND IN /Music FOLDER';
+          _currentTrackName = 'NO MUSIC FOUND IN /Music';
         });
       } catch (e) {
         setState(() {
@@ -104,7 +99,7 @@ class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScree
     if (_isPlaying) {
       await _audioPlayer.pause();
     } else {
-      if (_audioPlayer.source == null) {
+      if (_audioPlayer.processingState == ProcessingState.idle) {
         await _pickAndPlayMusic();
       } else {
         await _audioPlayer.play();
