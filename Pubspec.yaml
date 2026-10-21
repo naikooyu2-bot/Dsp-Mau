@@ -13,6 +13,7 @@ dependencies:
   audio_session: ^0.1.18
   path_provider: ^2.1.2
   permission_handler: ^11.3.1
+  file_picker: ^8.0.0
 
 flutter:
   uses-material-design: true
