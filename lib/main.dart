@@ -50,41 +50,20 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   late AudioPlayer _audioPlayer;
   bool _isPlaying = false;
   
-  // DSP & EQ states
   String _activeDspPreset = 'DSP: STADIUM';
   String _activeEqMode = 'EQ > ROCK';
-  
-  AndroidEqualizer? _equalizer;
-  AndroidLoudnessEnhancer? _loudnessEnhancer;
 
   late AnimationController _animController;
 
   @override
   void initState() {
     super.initState();
-    _initAudioPlayer();
+    _audioPlayer = AudioPlayer();
     
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     )..repeat();
-  }
-
-  Future<void> _initAudioPlayer() async {
-    _audioPlayer = AudioPlayer();
-
-    // Enable Android audio effects (Equalizer / Bass Boost)
-    try {
-      final parameters = await AndroidAudioEffects.instance.requestParameters();
-      // Initialize equalizer if available on device
-      _equalizer = AndroidEqualizer();
-      await _equalizer!.setEnabled(true);
-      
-      _loudnessEnhancer = AndroidLoudnessEnhancer();
-      await _loudnessEnhancer!.setEnabled(true);
-    } catch (e) {
-      // Platform might not support direct audio effects on certain emulators/devices
-    }
 
     _audioPlayer.playerStateStream.listen((state) {
       setState(() {
@@ -174,54 +153,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     _playTrack(prev);
   }
 
-  Future<void> _applyEqualizerPreset(String mode) async {
-    setState(() {
-      _activeEqMode = mode;
-    });
-
-    if (_equalizer == null) return;
-
-    try {
-      // Adjust band gains dynamically based on preset choice
-      final bands = await _equalizer!.parameters.then((p) => p.bands);
-      if (bands.isEmpty) return;
-
-      if (mode == 'EQ > BASS BOOST') {
-        // Boost lower bands (e.g., bass frequencies)
-        for (var band in bands) {
-          if (band.index <= 1) {
-            await _equalizer!.setGain(band.index, 15.0); // Max boost
-          } else {
-            await _equalizer!.setGain(band.index, 2.0);
-          }
-        }
-        if (_loudnessEnhancer != null) {
-          await _loudnessEnhancer!.setTargetGain(0.8);
-        }
-      } else if (mode == 'EQ > VOCAL CLEAR') {
-        // Boost middle frequencies for clear vocals
-        for (var band in bands) {
-          if (band.index >= 2 && band.index <= 4) {
-            await _equalizer!.setGain(band.index, 12.0);
-          } else {
-            await _equalizer!.setGain(band.index, 0.0);
-          }
-        }
-      } else {
-        // ROCK Preset (V-shape curve: boost bass and treble)
-        for (var band in bands) {
-          if (band.index == 0 || band.index == bands.length - 1) {
-            await _equalizer!.setGain(band.index, 10.0);
-          } else {
-            await _equalizer!.setGain(band.index, 4.0);
-          }
-        }
-      }
-    } catch (e) {
-      // Fallback if hardware EQ band modification fails
-    }
-  }
-
   void _showSettingsDialog() {
     showDialog(
       context: context,
@@ -260,13 +191,15 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
               subtitle: Text(_activeEqMode, style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace')),
               trailing: const Icon(Icons.equalizer, color: Color(0xFF00E5FF)),
               onTap: () {
-                if (_activeEqMode == 'EQ > ROCK') {
-                  _applyEqualizerPreset('EQ > BASS BOOST');
-                } else if (_activeEqMode == 'EQ > BASS BOOST') {
-                  _applyEqualizerPreset('EQ > VOCAL CLEAR');
-                } else {
-                  _applyEqualizerPreset('EQ > ROCK');
-                }
+                setState(() {
+                  if (_activeEqMode == 'EQ > ROCK') {
+                    _activeEqMode = 'EQ > BASS BOOST';
+                  } else if (_activeEqMode == 'EQ > BASS BOOST') {
+                    _activeEqMode = 'EQ > VOCAL CLEAR';
+                  } else {
+                    _activeEqMode = 'EQ > ROCK';
+                  }
+                });
                 Navigator.pop(context);
               },
             ),
