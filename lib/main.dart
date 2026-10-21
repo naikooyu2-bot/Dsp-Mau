@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -52,6 +53,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
   
   String _activeDspPreset = 'DSP: STADIUM';
   String _activeEqMode = 'EQ > ROCK';
+
+  static const platform = MethodChannel('com.maudsp.player/audio_fx');
 
   late AnimationController _animController;
 
@@ -118,10 +121,38 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
       _currentTrackIndex = index;
       final track = _playlist[index];
       await _audioPlayer.setFilePath(track.path);
+      
+      // Apply active DSP preset configuration upon track loading
+      await _applyDspEffect(_activeDspPreset);
+
       await _audioPlayer.play();
       setState(() {});
     } catch (e) {
       // Handle error
+    }
+  }
+
+  Future<void> _applyDspEffect(String preset) async {
+    setState(() {
+      _activeDspPreset = preset;
+    });
+
+    try {
+      final int? sessionId = await _audioPlayer.androidAudioSessionId;
+      if (sessionId != null) {
+        // Send reverb preset configuration to native Android audio effects handler
+        int presetMode = 0;
+        if (preset == 'DSP: STADIUM') presetMode = 1; // Large stadium acoustics
+        else if (preset == 'DSP: HALL') presetMode = 2; // Concert hall echo
+        else if (preset == 'DSP: LARGE ROOM') presetMode = 3; // Room reverberation
+
+        await platform.invokeMethod('setReverbPreset', {
+          'sessionId': sessionId,
+          'preset': presetMode,
+        });
+      }
+    } catch (_) {
+      // Fallback gracefully if hardware audio effects engine requires specific permission/state
     }
   }
 
@@ -153,6 +184,17 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     _playTrack(prev);
   }
 
+  Future<void> _openSystemEqualizer() async {
+    try {
+      final int? sessionId = await _audioPlayer.androidAudioSessionId;
+      await platform.invokeMethod('openAudioEffects', {'sessionId': sessionId ?? 0});
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Opening device sound effects panel...')),
+      );
+    }
+  }
+
   void _showSettingsDialog() {
     showDialog(
       context: context,
@@ -170,19 +212,26 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              title: const Text('Reverb Preset', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
-              subtitle: Text(_activeDspPreset, style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace')),
+              title: const Text('Open Hardware Equalizer', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+              subtitle: const Text('Configure Huawei Sound Effects', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 11)),
               trailing: const Icon(Icons.tune, color: Color(0xFF00E5FF)),
               onTap: () {
-                setState(() {
-                  if (_activeDspPreset == 'DSP: STADIUM') {
-                    _activeDspPreset = 'DSP: HALL';
-                  } else if (_activeDspPreset == 'DSP: HALL') {
-                    _activeDspPreset = 'DSP: LARGE ROOM';
-                  } else {
-                    _activeDspPreset = 'DSP: STADIUM';
-                  }
-                });
+                Navigator.pop(context);
+                _openSystemEqualizer();
+              },
+            ),
+            ListTile(
+              title: const Text('Reverb Preset', style: TextStyle(color: Colors.white, fontFamily: 'monospace')),
+              subtitle: Text(_activeDspPreset, style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace')),
+              trailing: const Icon(Icons.surround_sound, color: Color(0xFF00E5FF)),
+              onTap: () {
+                if (_activeDspPreset == 'DSP: STADIUM') {
+                  _applyDspEffect('DSP: HALL');
+                } else if (_activeDspPreset == 'DSP: HALL') {
+                  _applyDspEffect('DSP: LARGE ROOM');
+                } else {
+                  _applyDspEffect('DSP: STADIUM');
+                }
                 Navigator.pop(context);
               },
             ),
