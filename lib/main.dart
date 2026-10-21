@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 
 void main() {
   runApp(const CarrozzeriaDspApp());
@@ -23,8 +27,90 @@ class CarrozzeriaDspApp extends StatelessWidget {
   }
 }
 
-class CarrozzeriaVisualizerScreen extends StatelessWidget {
+class CarrozzeriaVisualizerScreen extends StatefulWidget {
   const CarrozzeriaVisualizerScreen({super.key});
+
+  @override
+  State<CarrozzeriaVisualizerScreen> createState() => _CarrozzeriaVisualizerScreenState();
+}
+
+class _CarrozzeriaVisualizerScreenState extends State<CarrozzeriaVisualizerScreen> {
+  late AudioPlayer _audioPlayer;
+  bool _isPlaying = false;
+  String _currentTrackName = 'SELECT LOCAL TRACK...';
+  String _audioInfo = 'EQ > DSP ON';
+
+  @override
+  void initState() {
+    super.initState();
+    _audioPlayer = AudioPlayer();
+    _audioPlayer.playerStateStream.listen((state) {
+      setState(() {
+        _isPlaying = state.playing;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickAndPlayMusic() async {
+    // Request storage permission
+    var status = await Permission.audio.request();
+    if (!status.isGranted) {
+      status = await Permission.storage.request();
+    }
+
+    if (status.isGranted) {
+      try {
+        // Pointing to standard local phone storage music directories or demo files
+        // For broad compatibility, let's look in common phone music paths or use file picker behavior
+        final directory = Directory('/storage/emulated/0/Music');
+        if (await directory.exists()) {
+          final files = directory.listSync().where((entity) => entity.path.endsWith('.mp3') || entity.path.endsWith('.flac')).toList();
+          
+          if (files.isNotEmpty) {
+            final filePath = files.first.path;
+            await _audioPlayer.setFilePath(filePath);
+            await _audioPlayer.play();
+            setState(() {
+              _currentTrackName = files.first.uri.pathSegments.last;
+              _audioInfo = filePath.endsWith('.flac') ? 'FLAC 96kHz/24bit' : 'MP3 LOCAL AUDIO';
+            });
+            return;
+          }
+        }
+        
+        // Fallback: If no files found in /Music, let user know via track text
+        setState(() {
+          _currentTrackName = 'NO MUSIC FOUND IN /Music FOLDER';
+        });
+      } catch (e) {
+        setState(() {
+          _currentTrackName = 'ERROR LOADING FILE';
+        });
+      }
+    } else {
+      setState(() {
+        _currentTrackName = 'PERMISSION DENIED';
+      });
+    }
+  }
+
+  void _togglePlay() async {
+    if (_isPlaying) {
+      await _audioPlayer.pause();
+    } else {
+      if (_audioPlayer.source == null) {
+        await _pickAndPlayMusic();
+      } else {
+        await _audioPlayer.play();
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -80,8 +166,8 @@ class CarrozzeriaVisualizerScreen extends StatelessWidget {
                       children: [
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: const [
-                            Text(
+                          children: [
+                            const Text(
                               'EQ > DSP ON',
                               style: TextStyle(
                                 color: Color(0xFF00E5FF),
@@ -90,8 +176,8 @@ class CarrozzeriaVisualizerScreen extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              'FLAC 96kHz/24bit',
-                              style: TextStyle(
+                              _audioInfo,
+                              style: const TextStyle(
                                 color: Color(0xFF00E5FF),
                                 fontSize: 12,
                                 fontFamily: 'monospace',
@@ -109,7 +195,7 @@ class CarrozzeriaVisualizerScreen extends StatelessWidget {
                             ];
                             return Container(
                               width: 8,
-                              height: heights[index % heights.length],
+                              height: _isPlaying ? heights[(index + DateTime.now().second) % heights.length] : 15.0,
                               decoration: BoxDecoration(
                                 color: const Color(0xFF00E5FF),
                                 borderRadius: BorderRadius.circular(2),
@@ -123,14 +209,15 @@ class CarrozzeriaVisualizerScreen extends StatelessWidget {
                             );
                           }),
                         ),
-                        const Text(
-                          '>> TRACK_01_MAU_SESSION.FLAC',
-                          style: TextStyle(
+                        Text(
+                          '>> $_currentTrackName',
+                          style: const TextStyle(
                             color: Color(0xFF00E5FF),
-                            fontSize: 14,
+                            fontSize: 13,
                             fontWeight: FontWeight.bold,
                             fontFamily: 'monospace',
                           ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -139,6 +226,17 @@ class CarrozzeriaVisualizerScreen extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF050B14),
+                foregroundColor: const Color(0xFF00E5FF),
+                side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
+              ),
+              onPressed: _pickAndPlayMusic,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('LOAD LOCAL MUSIC FOLDER', style: TextStyle(fontFamily: 'monospace')),
+            ),
+            const SizedBox(height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -159,9 +257,9 @@ class CarrozzeriaVisualizerScreen extends StatelessWidget {
                     ],
                   ),
                   child: IconButton(
-                    icon: const Icon(Icons.play_arrow_rounded, size: 44),
+                    icon: Icon(_isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 44),
                     color: const Color(0xFF00E5FF),
-                    onPressed: () {},
+                    onPressed: _togglePlay,
                   ),
                 ),
                 IconButton(
