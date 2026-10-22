@@ -139,48 +139,4 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     try {
       final int? sessionId = await _audioPlayer.androidAudioSessionId;
       await platform.invokeMethod('openAudioEffects', {'sessionId': sessionId ?? 0});
-    } catch (_) {}
-  }
-
-  void _togglePlay() async {
-    if (_playlist.isEmpty) return;
-    if (_isPlaying) {
-      await _audioPlayer.pause();
-    } else {
-      if (_currentTrackIndex == -1) {
-        await _playTrack(0);
-      } else {
-        await _audioPlayer.play();
-      }
-    }
-  }
-
-  void _nextTrack() {
-    if (_playlist.isEmpty) return;
-    int next = (_currentTrackIndex + 1) % _playlist.length;
-    _playTrack(next);
-  }
-
-  void _prevTrack() {
-    if (_playlist.isEmpty) return;
-    int prev = (_currentTrackIndex - 1 + _playlist.length) % _playlist.length;
-    _playTrack(prev);
-  }
-
-  void _showDspDialog() {
-    final dspOptions = ['DSP: HALL', 'DSP: STADIUM', 'DSP: LARGE ROOM'];
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF050B14),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
-        ),
-        title: const Text('DEQ-P999 ACOUSTIC DSP', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 15)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: dspOptions.map((preset) => ListTile(
-            title: Text(preset, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
-            trailing: _activeDspPreset == preset ? const Icon(Icons.check, color: Color(0xFF00E5FF)) : null,
-            onTap:
+    } catch (_)
