@@ -1,20 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:on_audio_query/on_audio_query.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
-import 'dart:io';
 import 'dart:math' as math;
 
 void main() {
   runApp(const CarrozzeriaDspApp());
-}
-
-class TrackItem {
-  final String name;
-  final String path;
-  final String quality;
-
-  TrackItem({required this.name, required this.path, required this.quality});
 }
 
 class CarrozzeriaDspApp extends StatelessWidget {
@@ -44,13 +36,19 @@ class MainPlayerScreen extends StatefulWidget {
 }
 
 class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerProviderStateMixin {
-  int _currentIndex = 0;
-  final List<TrackItem> _playlist = [];
-  int _currentTrackIndex = -1;
+  String _selectedSection = 'All Songs';
+  final OnAudioQuery _audioQuery = OnAudioQuery();
+  List<SongModel> _playlist = [];
+  List<AlbumModel> _albums = [];
+  List<ArtistModel> _artists = [];
+  List<GenreModel> _genres = [];
+  List<PlaylistModel> _playlists = [];
   
+  int _currentTrackIndex = -1;
   late AudioPlayer _audioPlayer;
   bool _isPlaying = false;
-  
+  bool _isLoadingLibrary = true;
+
   String _activeDspPreset = 'DSP: STADIUM';
   String _activeEqMode = 'EQ: HARDWARE';
 
@@ -64,7 +62,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: const Duration(milliseconds: 300),
     )..repeat();
 
     _audioPlayer.playerStateStream.listen((state) {
@@ -77,6 +75,8 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
         }
       });
     });
+
+    _requestStorageAndScan();
   }
 
   @override
@@ -86,40 +86,46 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     super.dispose();
   }
 
-  Future<void> _importSongs() async {
+  Future<void> _requestStorageAndScan() async {
+    PermissionStatus status = await Permission.audio.request();
+    if (!status.isGranted) {
+      status = await Permission.storage.request();
+    }
+
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.audio,
-        allowMultiple: true,
+      List<SongModel> songs = await _audioQuery.querySongs(
+        uriType: UriType.EXTERNAL,
+        orderType: OrderType.DEFAULT,
+        sortType: SongSortType.TITLE,
+        ignoreCase: true,
       );
 
-      if (result != null) {
-        setState(() {
-          for (var file in result.files) {
-            if (file.path != null) {
-              final name = file.name;
-              final quality = name.toLowerCase().endsWith('.flac') ? 'FLAC 96kHz/24bit' : 'MP3 320kbps';
-              if (!_playlist.any((t) => t.path == file.path)) {
-                _playlist.add(TrackItem(name: name, path: file.path!, quality: quality));
-              }
-            }
-          }
-          if (_currentTrackIndex == -1 && _playlist.isNotEmpty) {
-            _playTrack(0);
-          }
-        });
-      }
-    } catch (_) {}
+      List<AlbumModel> albums = await _audioQuery.queryAlbums();
+      List<ArtistModel> artists = await _audioQuery.queryArtists();
+      List<GenreModel> genres = await _audioQuery.queryGenres();
+      List<PlaylistModel> playlists = await _audioQuery.queryPlaylists();
+
+      setState(() {
+        _playlist = songs;
+        _albums = albums;
+        _artists = artists;
+        _genres = genres;
+        _playlists = playlists;
+        _isLoadingLibrary = false;
+      });
+    } catch (_) {
+      setState(() => _isLoadingLibrary = false);
+    }
   }
 
   Future<void> _playTrack(int index) async {
     if (index < 0 || index >= _playlist.length) return;
     try {
       _currentTrackIndex = index;
-      final track = _playlist[index];
-      await _audioPlayer.setFilePath(track.path);
+      final song = _playlist[index];
       
-      // Attach to Android session
+      await _audioPlayer.setFilePath(song.data);
+      
       final int? sessionId = await _audioPlayer.androidAudioSessionId;
       if (sessionId != null) {
         await platform.invokeMethod('initEffects', {'sessionId': sessionId});
@@ -130,29 +136,15 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     } catch (_) {}
   }
 
-  // Opens the phone's native Android/Huawei Sound Effects & Equalizer control panel
   Future<void> _openDeviceEqualizer() async {
     try {
       final int? sessionId = await _audioPlayer.androidAudioSessionId;
-      // Triggers Android's audio effect control panel intent directly
       await platform.invokeMethod('openAudioEffects', {'sessionId': sessionId ?? 0});
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Opening device sound effects...', style: TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF))),
-            backgroundColor: Color(0xFF050B14),
-          ),
-        );
-      }
-    }
+    } catch (_) {}
   }
 
   void _togglePlay() async {
-    if (_playlist.isEmpty) {
-      await _importSongs();
-      return;
-    }
+    if (_playlist.isEmpty) return;
     if (_isPlaying) {
       await _audioPlayer.pause();
     } else {
@@ -176,45 +168,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
     _playTrack(prev);
   }
 
-  // EQ Dialog pointing directly to device hardware sound control
-  void _showEqDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF050B14),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
-        ),
-        title: const Text('HARDWARE EQUALIZER', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 15)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'To ensure 100% working EQ and sound effects on Huawei/Android, configure your custom bands directly through your device sound processor:',
-              style: TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'monospace'),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF03070E),
-                foregroundColor: const Color(0xFF00E5FF),
-                side: const BorderSide(color: Color(0xFF00E5FF), width: 1),
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-                _openDeviceEqualizer();
-              },
-              icon: const Icon(Icons.tune),
-              label: const Text('OPEN SYSTEM EQ PANEL', style: TextStyle(fontFamily: 'monospace', fontSize: 11)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // DSP Reverb Dialog
   void _showDspDialog() {
     final dspOptions = ['DSP: HALL', 'DSP: STADIUM', 'DSP: LARGE ROOM'];
     showDialog(
@@ -234,13 +187,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             onTap: () {
               setState(() => _activeDspPreset = preset);
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Activated $preset Acoustic Space', style: const TextStyle(fontFamily: 'monospace', color: Color(0xFF00E5FF))),
-                  backgroundColor: const Color(0xFF050B14),
-                  duration: const Duration(seconds: 1),
-                ),
-              );
             },
           )).toList(),
         ),
@@ -250,30 +196,190 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
-    final screens = [_buildPlayerTab(), _buildPlaylistTab()];
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Color(0xFF00E5FF)),
         title: Text(
-          _currentIndex == 0 ? 'PIONEER DEQ-P999' : 'LIBRARY & PLAYLIST',
+          _selectedSection.toUpperCase(),
           style: const TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold, letterSpacing: 2.0),
         ),
         centerTitle: true,
       ),
-      body: screens[_currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        backgroundColor: Colors.black,
-        selectedItemColor: const Color(0xFF00E5FF),
-        unselectedItemColor: Colors.grey,
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.play_circle_fill_rounded), label: 'Player'),
-          BottomNavigationBarItem(icon: Icon(Icons.library_music_rounded), label: 'Library'),
+      drawer: _buildNavigationDrawer(),
+      body: _getSelectedBodyView(),
+    );
+  }
+
+  // Side Drawer mirroring your reference menu layout
+  Widget _buildNavigationDrawer() {
+    return Drawer(
+      backgroundColor: const Color(0xFF0C1017),
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          const DrawerHeader(
+            decoration: BoxDecoration(color: Color(0xFF03070E)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text('CARROZZERIA', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                SizedBox(height: 4),
+                Text('DEQ-P999 Hi-Fi Audio', style: TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 12)),
+              ],
+            ),
+          ),
+          _drawerItem(Icons.play_arrow_rounded, 'Current'),
+          _drawerItem(Icons.music_note_rounded, 'All Songs'),
+          _drawerItem(Icons.album_rounded, 'Albums'),
+          _drawerItem(Icons.mic_rounded, 'Artists'),
+          _drawerItem(Icons.queue_music_rounded, 'Genres'),
+          _drawerItem(Icons.playlist_play_rounded, 'Playlists'),
+          _drawerItem(Icons.folder_rounded, 'Folders'),
+          const Divider(color: Colors.grey, height: 20),
+          _drawerItem(Icons.settings_rounded, 'Settings'),
+          _drawerItem(Icons.equalizer_rounded, 'Equalizer'),
         ],
       ),
+    );
+  }
+
+  Widget _drawerItem(IconData icon, String title) {
+    bool isSelected = _selectedSection == title;
+    return ListTile(
+      leading: Icon(icon, color: isSelected ? const Color(0xFF00E5FF) : Colors.white70),
+      title: Text(
+        title,
+        style: TextStyle(
+          color: isSelected ? const Color(0xFF00E5FF) : Colors.white,
+          fontFamily: 'monospace',
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+      onTap: () {
+        Navigator.pop(context); // close drawer
+        if (title == 'Equalizer') {
+          _openDeviceEqualizer();
+        } else {
+          setState(() => _selectedSection = title);
+        }
+      },
+    );
+  }
+
+  Widget _getSelectedBodyView() {
+    if (_isLoadingLibrary) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF00E5FF)));
+    }
+
+    switch (_selectedSection) {
+      case 'Current':
+        return _buildPlayerTab();
+      case 'Albums':
+        return ListView.builder(
+          itemCount: _albums.length,
+          itemBuilder: (context, index) => ListTile(
+            leading: const Icon(Icons.album, color: Color(0xFF00E5FF)),
+            title: Text(_albums[index].album, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
+            subtitle: Text('${_albums[index].numOfSongs ?? 0} songs', style: const TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 11)),
+          ),
+        );
+      case 'Artists':
+        return ListView.builder(
+          itemCount: _artists.length,
+          itemBuilder: (context, index) => ListTile(
+            leading: const Icon(Icons.mic, color: Color(0xFF00E5FF)),
+            title: Text(_artists[index].artist, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
+            subtitle: Text('${_artists[index].numberOfTracks ?? 0} tracks', style: const TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 11)),
+          ),
+        );
+      case 'Genres':
+        return ListView.builder(
+          itemCount: _genres.length,
+          itemBuilder: (context, index) => ListTile(
+            leading: const Icon(Icons.queue_music, color: Color(0xFF00E5FF)),
+            title: Text(_genres[index].genre, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
+          ),
+        );
+      case 'Playlists':
+        return ListView.builder(
+          itemCount: _playlists.length,
+          itemBuilder: (context, index) => ListTile(
+            leading: const Icon(Icons.playlist_play, color: Color(0xFF00E5FF)),
+            title: Text(_playlists[index].playlist, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
+          ),
+        );
+      case 'Folders':
+        return const Center(
+          child: Text('FOLDERS VIEW (AUTO-SYNCED)', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace')),
+        );
+      case 'Settings':
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text('CARROZZERIA SYSTEM SETTINGS', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF050B14), foregroundColor: const Color(0xFF00E5FF)),
+                  onPressed: _requestStorageAndScan,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Rescan Device Storage', style: TextStyle(fontFamily: 'monospace')),
+                ),
+              ],
+            ),
+          ),
+        );
+      case 'All Songs':
+      default:
+        return _buildAllSongsView();
+    }
+  }
+
+  Widget _buildAllSongsView() {
+    if (_playlist.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.music_off_rounded, size: 64, color: Color(0xFF00E5FF)),
+            const SizedBox(height: 16),
+            const Text('NO MUSIC FOUND', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF050B14), foregroundColor: const Color(0xFF00E5FF)),
+              onPressed: _requestStorageAndScan,
+              child: const Text('RESCAN', style: TextStyle(fontFamily: 'monospace')),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _playlist.length,
+      itemBuilder: (context, index) {
+        final song = _playlist[index];
+        final isSelected = index == _currentTrackIndex;
+
+        return ListTile(
+          leading: Icon(isSelected ? Icons.graphic_eq_rounded : Icons.music_note_rounded, color: const Color(0xFF00E5FF)),
+          title: Text(
+            song.title,
+            style: TextStyle(color: isSelected ? const Color(0xFF00E5FF) : Colors.white, fontFamily: 'monospace', fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(song.artist ?? '<unknown artist>', style: const TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 11)),
+          onTap: () {
+            _playTrack(index);
+            setState(() => _selectedSection = 'Current');
+          },
+        );
+      },
     );
   }
 
@@ -290,7 +396,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             decoration: BoxDecoration(
               color: const Color(0xFF03070E),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.5), width: 2),
+              border: Border.all(color: const Color(0xFF00E5FF).withOpacity(0.6), width: 2),
               boxShadow: [BoxShadow(color: const Color(0xFF00E5FF).withOpacity(0.3), blurRadius: 12, spreadRadius: 1)],
             ),
             child: Stack(
@@ -306,7 +412,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(_activeEqMode, style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace')),
-                          Text(currentTrack?.quality ?? 'FLAC 96kHz/24bit', style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace')),
+                          const Text('FLAC/MP3 Hi-Fi', style: TextStyle(color: Color(0xFF00E5FF), fontSize: 11, fontFamily: 'monospace')),
                         ],
                       ),
                       AnimatedBuilder(
@@ -315,14 +421,14 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                           return Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             crossAxisAlignment: CrossAxisAlignment.end,
-                            children: List.generate(20, (index) {
-                              double wave = _isPlaying
-                                  ? (math.sin((_animController.value * 2 * math.pi) + (index * 0.4)) * 50 +
-                                      math.cos((_animController.value * 3 * math.pi) + (index * 0.3)) * 30 + 70)
-                                  : 12.0;
+                            children: List.generate(24, (index) {
+                              double heightFactor = _isPlaying
+                                  ? (math.sin((_animController.value * math.pi * 4) + (index * 0.5)).abs() * 85 +
+                                      math.cos((_animController.value * math.pi * 3) - (index * 0.3)).abs() * 45 + 15)
+                                  : 10.0;
                               return Container(
-                                width: 6,
-                                height: wave.clamp(10.0, 130.0),
+                                width: 5,
+                                height: heightFactor.clamp(8.0, 120.0),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF00E5FF),
                                   borderRadius: BorderRadius.circular(1),
@@ -339,7 +445,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                           Text(_activeDspPreset, style: const TextStyle(color: Colors.grey, fontSize: 10, fontFamily: 'monospace')),
                           const SizedBox(height: 2),
                           Text(
-                            '>> ${currentTrack?.name ?? 'SELECT LOCAL TRACK...'}',
+                            '>> ${currentTrack?.title ?? 'SELECT TRACK'}',
                             style: const TextStyle(color: Color(0xFF00E5FF), fontSize: 13, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -361,7 +467,7 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
                     foregroundColor: const Color(0xFF00E5FF),
                     side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
                   ),
-                  onPressed: _showEqDialog,
+                  onPressed: _openDeviceEqualizer,
                   icon: const Icon(Icons.equalizer, size: 18),
                   label: const Text('EQ SETTINGS', style: TextStyle(fontFamily: 'monospace', fontSize: 12)),
                 ),
@@ -382,17 +488,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
             ],
           ),
           const Spacer(),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF050B14),
-              foregroundColor: const Color(0xFF00E5FF),
-              side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
-            ),
-            onPressed: _importSongs,
-            icon: const Icon(Icons.library_add_rounded),
-            label: const Text('IMPORT MUSIC FILES', style: TextStyle(fontFamily: 'monospace')),
-          ),
-          const SizedBox(height: 15),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -415,51 +510,6 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           const SizedBox(height: 30),
         ],
       ),
-    );
-  }
-
-  Widget _buildPlaylistTab() {
-    if (_playlist.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.music_off_rounded, size: 64, color: Color(0xFF00E5FF)),
-            const SizedBox(height: 16),
-            const Text('NO SONGS IN LIBRARY', style: TextStyle(color: Color(0xFF00E5FF), fontFamily: 'monospace', fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF050B14),
-                foregroundColor: const Color(0xFF00E5FF),
-                side: const BorderSide(color: Color(0xFF00E5FF), width: 1.5),
-              ),
-              onPressed: _importSongs,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('ADD MUSIC', style: TextStyle(fontFamily: 'monospace')),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListView.builder(
-      itemCount: _playlist.length,
-      itemBuilder: (context, index) {
-        final track = _playlist[index];
-        final isSelected = index == _currentTrackIndex;
-
-        return ListTile(
-          leading: Icon(isSelected ? Icons.graphic_eq_rounded : Icons.music_note_rounded, color: const Color(0xFF00E5FF)),
-          title: Text(
-            track.name,
-            style: TextStyle(color: isSelected ? const Color(0xFF00E5FF) : Colors.white, fontFamily: 'monospace', fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(track.quality, style: const TextStyle(color: Colors.grey, fontFamily: 'monospace', fontSize: 11)),
-          onTap: () => _playTrack(index),
-        );
-      },
     );
   }
 }
