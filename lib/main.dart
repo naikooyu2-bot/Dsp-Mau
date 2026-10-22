@@ -183,6 +183,4 @@ class _MainPlayerScreenState extends State<MainPlayerScreen> with SingleTickerPr
           children: dspOptions.map((preset) => ListTile(
             title: Text(preset, style: const TextStyle(color: Colors.white, fontFamily: 'monospace')),
             trailing: _activeDspPreset == preset ? const Icon(Icons.check, color: Color(0xFF00E5FF)) : null,
-            onTap: () {
-              setState(() => _activeDspPreset = preset);
-              Navigator.pop(context
+            onTap:
